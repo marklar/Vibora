@@ -1,0 +1,239 @@
+//
+// Modified from:
+// http://maniagnosis.crsr.net/2011/07/snakes-on-yeti.html
+//
+module vibora;
+
+import java.util.Random;
+import java.awt: Color, Dimension, Graphics;  // multiple classes from same package
+import java.awt.event: ActionEvent, KeyEvent, ActionListener, KeyListener;
+import javax.swing: JFrame, JPanel, JOptionPane, Timer;
+
+// game grid
+width  = 50;
+height = 30;
+
+// each grid piece: pixels per side
+pointSize = 30;
+
+// num ms per game step
+turnMillis = 50;
+
+// to win: length of snake (in segments)
+winLength = 6;
+
+typedef point = { x is number
+	        , y is number
+		}
+
+mvLeft  = {x = -1, y =  0};
+mvUp    = {x =  0, y = -1};
+mvRight = {x =  1, y =  0};
+mvDown  = {x =  0, y =  1};
+
+// number (KeyEvent#FOO) -- signify key presses
+// point -- snake's change in direction
+key2dir is map<number, point> =
+  [ KeyEvent#VK_LEFT  : mvLeft
+  , KeyEvent#VK_J     : mvLeft
+
+  , KeyEvent#VK_RIGHT : mvRight
+  , KeyEvent#VK_L     : mvRight
+
+  , KeyEvent#VK_UP    : mvUp
+  , KeyEvent#VK_I     : mvUp
+
+  , KeyEvent#VK_DOWN  : mvDown
+  , KeyEvent#VK_K     : mvDown
+  ];
+// 'pause': what to do for missing map key.
+pause _ = {x = 0, y = 0};
+setHashDefault key2dir pause;
+
+// -- Java interaction --
+
+r = new Random();
+
+// Given two points, add Xs together and Ys together.
+// addPoints m n is point -> point -> point =
+addPoints m n is point -> point -> point =
+  { x = m.x + n.x
+  , y = m.y + n.y
+  };
+// (.+.) m n = {x = m.x + n.x, y = m.y + n.y};
+
+typedef screenRec = { x is number
+		    , y is number
+		    , w is number
+		    , h is number
+		    }
+
+pointToScreenRec pt is point -> screenRec =
+  { x = (pt.x * pointSize)
+  , y = (pt.y * pointSize)
+  , w = pointSize
+  , h = pointSize
+  };
+
+typedef apple = { location is point
+	      	, color is ~Color  // ~: Java class
+		}
+
+red  = new Color(210,50,90);
+grey = new Color(127,127,127);
+
+mkApple () is () -> apple =
+   { location = { x = r#nextInt(width)
+     	        , y = r#nextInt(height)
+		}
+   , color = grey
+   };
+
+typedef snakeBody = { front   is list<point>
+		    , back is list<point>
+		    }
+// mkBody () = { front = [{x = 1, y = 2}, {x = 1, y = 1}]
+mkBody () = { front = [ {x = 1, y = 5} ]
+       	    , back = [ {x = 1, y = 1}
+       	      	     , {x = 1, y = 2}
+       	      	     , {x = 1, y = 3}
+       	      	     , {x = 1, y = 4}
+		     ]
+	    };
+
+typedef snake = { body is snakeBody
+	      	, dir is point
+		, color is ~Color
+		}
+
+green = new Color(15,160,70);   // java obj
+blue  = new Color(15,70,160);   // java obj
+
+mkSnake () is () -> snake =
+  { body  = mkBody ()
+  , dir   = {x = 1, y = 0}  // make variant (N | E | S | W)
+  , color = green
+  };
+
+newHead snake = addPoints (head snake.body.front) snake.dir;
+
+grow snake is snake -> snake = (
+  body = { front = newHead snake :: snake.body.front
+         , back = snake.body.back
+         };
+  snake with {body}
+);
+
+move snake is snake -> snake = (
+  body = case snake.body.back of
+    []    : { front = [newHead snake]
+            , back = tail (reverse snake.body.front)
+            };
+    h::t  : { front = newHead snake :: snake.body.front
+            , back = t
+            };
+    // Why is this necessary?
+    _     : throw new Exception('foo');
+  esac;
+  snake with {body};
+);
+
+snakeLength snake is snake -> number =
+  length snake.body.front + length snake.body.back;
+
+win? snake is snake -> boolean =
+  snakeLength snake >= winLength;
+
+overlaps? b is snakeBody -> boolean =
+  ( hd = head b.front;
+    any (contains hd) [tail b.front, b.back] );
+
+lose? snake is snake -> boolean =
+  overlaps? snake.body;
+
+eats? snake apple is snake -> apple -> boolean =
+  head snake.body.front == apple.location;
+
+turn snake dir is snake -> point -> snake =
+  snake with {dir};
+
+// Mutable state
+
+var snake = mkSnake ();
+var apple = mkApple ();
+
+resetGame () is () -> () =
+  ( snake := mkSnake ();
+    apple := mkApple () );
+
+updateDirection newdir = snake := turn snake newdir;
+
+updatePositions () =
+  if eats? snake apple
+  then apple := mkApple ();
+       snake := grow snake;
+  else snake := move snake
+  fi;
+ 
+// GUI
+
+// When using Java method calls, need type specification.
+// Can do either in function signature, 
+// or (g is ~Graphics)#foo.
+fillPoint g pt c is ~Graphics -> point -> ~Color -> () =
+   ( {x,y,w,h} = pointToScreenRec pt;
+     g#setColor(c);
+     g#fillRect(x,y,w,h) );
+
+paintApple g a is ~Graphics -> apple -> () =
+  fillPoint g apple.location apple.color;
+
+paintSnake g s is ~Graphics -> snake -> () = (
+  f segment = fillPoint g segment s.color;
+  for s.body.front f;
+  for s.body.back f;
+);
+
+class GamePanel(JFrame frame) extends JPanel, ActionListener, KeyListener
+    void paintComponent(Graphics g)
+        super#paintComponent(g);
+        g#clearRect(0,0,(width+1) * pointSize,(height+1)*pointSize);
+        paintSnake g snake;
+        paintApple g apple,
+
+    void actionPerformed(ActionEvent e)
+        updatePositions ();
+        if lose? snake
+        then JOptionPane#showMessageDialog(frame, "Perdiste.  Otra vez?");
+             resetGame ();
+        elif win? snake
+        then JOptionPane#showMessageDialog(frame, "Felicidades!  Ganaste!");
+             resetGame ();
+        fi;
+        this#repaint(),
+
+    void keyPressed(KeyEvent e)
+        updateDirection key2dir.[e#getKeyCode()],
+
+    Dimension getPreferredSize()
+        new Dimension((width + 1) * pointSize,
+                      (height + 1) * pointSize),
+
+    void keyReleased(KeyEvent e),
+
+    void keyTyped(KeyEvent e)
+end;
+
+game () = (
+  frame = new JFrame('Vibora de la Mar');
+  panel = new GamePanel(frame);
+  timer = new Timer(turnMillis,panel);
+  panel#setFocusable(true);
+  panel#addKeyListener(panel);
+  frame#add(panel);
+  frame#pack();
+  frame#setVisible(true);
+  timer#start()
+);
+
+game ()
